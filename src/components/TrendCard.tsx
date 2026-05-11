@@ -22,83 +22,92 @@ interface TrendCardProps {
   trend: Trend;
 }
 
-const TrendCard: React.FC<TrendCardProps> = ({ trend }) => {
-  const name = trend.trend_name || trend.trend || 'Beauty Trend';
-  const platform = trend.source_platform || trend.platform || 'Multiple Sources';
-  const label = trend.label || '[TREND]';
-  const category = trend.category || '';
-  const metric = trend.metric || trend.popularity || trend.metric_summary || 'Rising';
-  const context = trend.context || trend.what_is_happening || '';
-  const result = trend.result || trend.the_result || '';
+const platformIcons: Record<string, string> = {
+  reddit: '👾',
+  pinterest: '📌',
+  google: '🔍',
+  news: '📰',
+  rss: '📰',
+  grazia: '📰',
+  herzindagi: '📰',
+  indiatimes: '📰',
+  default: '💎',
+};
 
-  const shareToWhatsApp = () => {
+function getPlatformIcon(platform: string): string {
+  const p = platform.toLowerCase();
+  for (const key of Object.keys(platformIcons)) {
+    if (p.includes(key)) return platformIcons[key];
+  }
+  return platformIcons.default;
+}
+
+const TrendCard: React.FC<TrendCardProps> = ({ trend }) => {
+  const name     = trend.trend_name || trend.trend || 'Beauty Trend';
+  const platform = trend.source_platform || trend.platform || 'Multiple Sources';
+  const label    = trend.label || '[TREND]';
+  const category = trend.category || '';
+  const metric   = trend.metric || trend.popularity || trend.metric_summary || 'Rising';
+  const context  = trend.context || trend.what_is_happening || '';
+  const result   = trend.result || trend.the_result || '';
+  const hasUrl   = Boolean(trend.url);
+
+  const shareToWhatsApp = (e: React.MouseEvent) => {
+    e.stopPropagation();
     const text = `🚀 *Trend Alert: ${name}*\n\n📍 *Source:* ${platform}\n📊 *Metric:* ${metric}\n\n💬 *Context:* ${context}\n\n✨ *Result:* ${result}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
-  const shareToTelegram = () => {
-    const text = `🚀 *Trend Alert: ${name}*\n\n📍 Source: ${platform}\n📊 Metric: ${metric}\n\nContext: ${context}\n\nResult: ${result}`;
-    window.open(`https://t.me/share/url?url=${encodeURIComponent(trend.url || '')}&text=${encodeURIComponent(text)}`, '_blank');
-  };
-
-  const getPlatformIcon = (p: string) => {
-    const platform = p.toLowerCase();
-    if (platform.includes('reddit')) return '👾';
-    if (platform.includes('pinterest')) return '📌';
-    if (platform.includes('google') || platform.includes('search')) return '🔍';
-    if (platform.includes('news') || platform.includes('grazia') || platform.includes('herzindagi') || platform.includes('indiatimes') || platform.includes('lifestyle')) return '📰';
-    return '💎';
-  };
-
-  const copyToClipboard = () => {
-    const text = `🚀 Trend Alert: ${name}\n\n📍 Source: ${platform}\n📊 Metric: ${metric}\n\nContext: ${context}\n\nResult: ${result}`;
-    navigator.clipboard.writeText(text);
-    alert('Copied to clipboard!');
-  };
-
   const openSource = () => {
-    if (trend.url) {
-      window.open(trend.url, '_blank');
-    }
+    if (trend.url) window.open(trend.url, '_blank');
   };
 
   return (
-    <div 
-      className={`premium-card ${trend.url ? styles.clickable : ''}`} 
-      onClick={openSource}
-      style={{ cursor: trend.url ? 'pointer' : 'default' }}
+    <div
+      className={`premium-card ${styles.card} ${hasUrl ? styles.clickable : ''}`}
+      onClick={hasUrl ? openSource : undefined}
+      style={{ cursor: hasUrl ? 'pointer' : 'default' }}
     >
-      <div className={styles.header}>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+      {/* Top row: badges + icon */}
+      <div className={styles.cardTop}>
+        <div className={styles.badges}>
           <span className="badge badge-rising">{label}</span>
-          {category && <span className={`badge ${styles.categoryBadge}`}>{category}</span>}
+          {category && <span className="badge badge-ai">{category}</span>}
         </div>
         <span className={styles.platformIcon}>{getPlatformIcon(platform)}</span>
       </div>
-      
+
+      {/* Title */}
       <h3 className={styles.title}>{name}</h3>
-      
+
+      {/* Meta */}
       <div className={styles.meta}>
-        <span>📍 {platform}</span>
-        <span>📊 {metric}</span>
+        <span className={styles.metaItem}>📍 {platform}</span>
+        <span className={styles.metaItem}>📊 {metric}</span>
       </div>
 
-      <div className={styles.content}>
-        <p className={styles.context}>{context}</p>
+      {/* Context */}
+      {context && <p className={styles.context}>{context}</p>}
+
+      {/* Result */}
+      {result && (
         <div className={styles.result}>
-          <strong>✨ Result:</strong>
-          <p>{result}</p>
+          <div className={styles.resultLabel}>✨ HUL Insight</div>
+          <p className={styles.resultText}>{result}</p>
         </div>
-      </div>
+      )}
 
-      {trend.url && <div className={styles.sourceHint}>Click to view original source ↗</div>}
+      {/* Source hint */}
+      {hasUrl && (
+        <div className={styles.sourceHint}>
+          <span>🔗</span> Click card to view original source ↗
+        </div>
+      )}
 
-      <div className={styles.actions} onClick={(e) => e.stopPropagation()}>
-        <button onClick={shareToWhatsApp} className="btn-primary">
-          <span className={styles.btnIcon}>💬</span> WhatsApp
-        </button>
-        <button onClick={shareToTelegram} className="btn-secondary">
-          <span className={styles.btnIcon}>✈️</span> Telegram
+      {/* Actions */}
+      <div className={styles.actions} onClick={e => e.stopPropagation()}>
+        <button className="btn-primary" onClick={shareToWhatsApp}>
+          💬 WhatsApp
         </button>
       </div>
     </div>
