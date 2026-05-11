@@ -30,16 +30,20 @@ function mapRawToCards(rawTrends: RawTrends, filter: FilterKey) {
 
   // Google Trends mapping
   if (filter === 'All' || filter === 'Google') {
-    list = [...list, ...(rawTrends.google || []).map((p: any) => ({
-      trend_name: p.title || p.query,
-      label: '[GOOGLE]',
-      category: 'Search',
-      source_platform: 'Google Trends',
-      metric: p.formattedValue || 'High Volume',
-      context: `Rising search interest in ${p.title || p.query}`,
-      result: 'Search trend detection',
-      url: p.url || '',
-    }))];
+    list = [...list, ...(rawTrends.google || []).map((p: any) => {
+      // Handle both object and string formats
+      const name = typeof p === 'string' ? p : (p.title || p.query || 'Unknown Trend');
+      return {
+        trend_name: name,
+        label: '[GOOGLE]',
+        category: 'Search',
+        source_platform: 'Google Trends',
+        metric: p.formattedValue || 'High Volume',
+        context: `Rising search interest in ${name}`,
+        result: 'Search trend detection',
+        url: p.url || `https://www.google.com/search?q=${encodeURIComponent(name)}`,
+      };
+    })];
   }
 
   if (filter === 'All' || filter === 'Reddit') {
