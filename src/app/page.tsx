@@ -12,12 +12,14 @@ export default function Home() {
   const [generatingAI, setGeneratingAI] = useState(false);
   const [status, setStatus] = useState('OFFLINE');
 
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
   const fetchData = async () => {
     try {
       const [rawRes, aiRes, statusRes] = await Promise.all([
-        fetch('http://localhost:8000/api/trends/raw'),
-        fetch('http://localhost:8000/api/trends/ai'),
-        fetch('http://localhost:8000/api/status')
+        fetch(`${API_BASE}/api/trends/raw`),
+        fetch(`${API_BASE}/api/trends/ai`),
+        fetch(`${API_BASE}/api/status`)
       ]);
 
       setRawTrends(await rawRes.json());
@@ -36,7 +38,7 @@ export default function Home() {
   const triggerSync = async () => {
     setSyncing(true);
     try {
-      await fetch('http://localhost:8000/api/sync', { method: 'POST' });
+      await fetch(`${API_BASE}/api/sync`, { method: 'POST' });
       setTimeout(fetchData, 5000); // Wait for bg task
     } catch (err) {
       console.error(err);
@@ -48,7 +50,7 @@ export default function Home() {
   const generateAI = async () => {
     setGeneratingAI(true);
     try {
-      const res = await fetch('http://localhost:8000/api/trends/ai/generate', { method: 'POST' });
+      const res = await fetch(`${API_BASE}/api/trends/ai/generate`, { method: 'POST' });
       setAiSummary(await res.json());
       setActiveFilter('AI Digest');
     } catch (err) {
