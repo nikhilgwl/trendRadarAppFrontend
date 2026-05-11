@@ -149,31 +149,30 @@ export default function Home() {
         </nav>
 
         <div className={styles.sidebarFooter}>
+          {activeFilter === 'AI Digest' && aiSummary && (
+            <button 
+              className="btn-primary" 
+              style={{ flex: '1.5' }}
+              onClick={shareConsolidated}
+            >
+              📢 Share Report
+            </button>
+          )}
           <button 
             className="btn-primary" 
-            style={{ width: '100%', marginBottom: '12px' }}
             onClick={generateAI}
             disabled={generatingAI}
+            style={activeFilter !== 'AI Digest' ? { width: '100%' } : {}}
           >
-            {generatingAI ? '✨ Analyzing...' : '🪄 Generate AI Digest'}
+            {generatingAI ? '✨...' : '🪄 AI Digest'}
           </button>
           <button 
             className="btn-secondary" 
-            style={{ width: '100%' }}
             onClick={triggerSync}
             disabled={syncing}
           >
-            {syncing ? 'Syncing...' : '🔄 Sync Raw Data'}
+            {syncing ? '...' : '🔄 Sync'}
           </button>
-          {aiSummary && (
-            <button 
-              className="btn-secondary" 
-              style={{ width: '100%', marginTop: '12px', border: '1px solid #7c3aed' }}
-              onClick={shareConsolidated}
-            >
-              📢 Share AI Report
-            </button>
-          )}
         </div>
       </aside>
 
