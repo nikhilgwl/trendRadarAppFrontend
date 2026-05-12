@@ -126,6 +126,9 @@ async function fetchAIFromSupabase(): Promise<any | null> {
 /* ════════════════════════════════════════
    PAGE COMPONENT
 ════════════════════════════════════════ */
+// Sync cooldown: prevent re-triggering for 3 minutes after a sync
+const SYNC_COOLDOWN_MS = 3 * 60 * 1000;
+
 export default function Home() {
   const [activeFilter, setActiveFilter] = useState<FilterKey>('AI Digest');
   const [rawTrends, setRawTrends]       = useState<RawTrends | null>(null);
@@ -133,8 +136,13 @@ export default function Home() {
   const [status, setStatus]             = useState<'Online' | 'OFFLINE'>('OFFLINE');
   const [lastUpdated, setLastUpdated]   = useState<string | null>(null);
   const [syncing, setSyncing]           = useState(false);
+  const [syncMessage, setSyncMessage]   = useState<string | null>(null);
+  const [syncCooldownUntil, setSyncCooldownUntil] = useState<number>(0);
   const [generatingAI, setGeneratingAI] = useState(false);
   const [drawerOpen, setDrawerOpen]     = useState(false);
+
+  // Derived: is the sync button locked by cooldown?
+  const syncOnCooldown = Date.now() < syncCooldownUntil;
 
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -166,15 +174,42 @@ export default function Home() {
   /* ── Sync: wakes backend, collects fresh data, saves to Supabase ── */
   const triggerSync = async () => {
     setSyncing(true);
+    setSyncCooldownUntil(Date.now() + SYNC_COOLDOWN_MS);
+    const steps = [
+      { msg: '⏳ Waking up backend server...', delay: 0 },
+      { msg: '🔍 Collecting Google Trends data...', delay: 5000 },
+      { msg: '👾 Scraping Reddit discussions...', delay: 12000 },
+      { msg: '📰 Fetching RSS & News feeds...', delay: 20000 },
+      { msg: '📌 Scanning Pinterest trends...', delay: 28000 },
+      { msg: '💾 Saving data to database...', delay: 38000 },
+    ];
+    steps.forEach(({ msg, delay }) =>
+      setTimeout(() => setSyncMessage(msg), delay)
+    );
     try {
       await fetch(`${API_BASE}/api/sync`, { method: 'POST' });
-      // Wait for background collection, then re-read from Supabase
-      setTimeout(async () => {
+      // Poll Supabase every 10s for up to 90s to detect new data
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
         const sbRaw = await fetchRawFromSupabase();
-        if (sbRaw) { setRawTrends(sbRaw); setLastUpdated(sbRaw.timestamp || null); }
-      }, 8000);
-    } catch (err) { console.error(err); }
-    finally { setSyncing(false); }
+        if (sbRaw) {
+          setRawTrends(sbRaw);
+          setLastUpdated(sbRaw.timestamp || null);
+        }
+        if (attempts >= 9) {
+          clearInterval(poll);
+          setSyncing(false);
+          setSyncMessage('✅ Sync complete! Data is up to date.');
+          setTimeout(() => setSyncMessage(null), 4000);
+        }
+      }, 10000);
+    } catch (err) {
+      console.error(err);
+      setSyncMessage('❌ Sync failed. Backend may be starting up — try again in 30s.');
+      setTimeout(() => setSyncMessage(null), 6000);
+      setSyncing(false);
+    }
   };
 
   /* ── AI: calls backend, result is stored in Supabase and returned ── */
@@ -240,11 +275,23 @@ export default function Home() {
       </nav>
 
       <div className={styles.sidebarActions}>
+        {/* Last updated chip */}
+        {lastUpdated && (
+          <div className={styles.lastUpdatedChip}>
+            🕒 {formatLastUpdated(lastUpdated)}
+          </div>
+        )}
         <button className="btn-primary" onClick={generateAI} disabled={generatingAI}>
           {generatingAI ? '⏳ Analyzing...' : '🪄 AI Digest'}
         </button>
-        <button className="btn-secondary" onClick={triggerSync} disabled={syncing} style={{ marginTop: '8px' }}>
-          {syncing ? '⏳ Syncing...' : '🔄 Sync Data'}
+        <button
+          className="btn-secondary"
+          onClick={triggerSync}
+          disabled={syncing || syncOnCooldown}
+          title={syncOnCooldown ? 'Sync is locked for 3 mins to avoid duplicate runs' : ''}
+          style={{ marginTop: '8px' }}
+        >
+          {syncing ? '⏳ Syncing...' : syncOnCooldown ? '🔒 Synced Recently' : '🔄 Sync Data'}
         </button>
         {aiSummary?.trends && activeFilter === 'AI Digest' && (
           <button className="btn-secondary" onClick={shareConsolidated} style={{ marginTop: '8px', borderColor: 'rgba(124,58,237,0.4)' }}>
@@ -275,6 +322,15 @@ export default function Home() {
           </header>
 
           <main className={styles.content}>
+            {/* ── Sync Status Banner ── */}
+            {syncMessage && (
+              <div className={styles.syncBanner}>
+                <span className={styles.syncBannerDot} />
+                <span>{syncMessage}</span>
+                {syncing && <span className={styles.syncEta}>This usually takes 2–3 minutes</span>}
+              </div>
+            )}
+
             <div className={styles.contentHeader}>
               <h2 className={styles.contentTitle}>
                 {activeFilter === 'AI Digest' ? 'Intelligence Digest' : `${activeFilter} Feed`}
@@ -307,8 +363,8 @@ export default function Home() {
           <button className="btn-primary" onClick={generateAI} disabled={generatingAI}>
             {generatingAI ? '⏳' : '🪄'} AI Digest
           </button>
-          <button className="btn-secondary" onClick={triggerSync} disabled={syncing}>
-            {syncing ? '⏳' : '🔄'} Sync
+          <button className="btn-secondary" onClick={triggerSync} disabled={syncing || syncOnCooldown}>
+            {syncing ? '⏳' : syncOnCooldown ? '🔒' : '🔄'} {syncing ? 'Syncing' : syncOnCooldown ? 'Locked' : 'Sync'}
           </button>
           {aiSummary?.trends && (
             <button className="btn-secondary" onClick={shareConsolidated}>📢</button>
