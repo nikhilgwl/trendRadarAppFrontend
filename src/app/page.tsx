@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import styles from './page.module.css';
 import TrendCard from '../components/TrendCard';
+import { createClient } from '../utils/supabase/client';
 
 /* ── Types ── */
 interface RawTrends {
@@ -11,6 +12,7 @@ interface RawTrends {
   rss?: any[];
   social?: any[];
   pinterest?: any[];
+  timestamp?: string;
 }
 
 type FilterKey = 'AI Digest' | 'All' | 'Reddit' | 'Pinterest' | 'News' | 'Google';
@@ -28,10 +30,8 @@ const FILTERS: { key: FilterKey; icon: string; label: string }[] = [
 function mapRawToCards(rawTrends: RawTrends, filter: FilterKey) {
   let list: any[] = [];
 
-  // Google Trends mapping
   if (filter === 'All' || filter === 'Google') {
     list = [...list, ...(rawTrends.google || []).map((p: any) => {
-      // Handle both object and string formats
       const name = typeof p === 'string' ? p : (p.title || p.query || 'Unknown Trend');
       return {
         trend_name: name,
@@ -88,6 +88,41 @@ function mapRawToCards(rawTrends: RawTrends, filter: FilterKey) {
   return list;
 }
 
+/* ─────────────────────────────────────
+   Supabase helpers (client-side reads)
+   These bypass the backend entirely, so
+   data shows even when Render is asleep.
+───────────────────────────────────── */
+async function fetchRawFromSupabase(): Promise<RawTrends | null> {
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('raw_trends')
+      .select('platform, data, collected_at');
+    if (error || !data?.length) return null;
+
+    const result: RawTrends = {};
+    for (const row of data) {
+      (result as any)[row.platform] = row.data;
+      if (!result.timestamp) result.timestamp = row.collected_at;
+    }
+    return result;
+  } catch { return null; }
+}
+
+async function fetchAIFromSupabase(): Promise<any | null> {
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('ai_digest')
+      .select('trends, generated_at')
+      .order('generated_at', { ascending: false })
+      .limit(1);
+    if (error || !data?.length) return null;
+    return { trends: data[0].trends, timestamp: data[0].generated_at };
+  } catch { return null; }
+}
+
 /* ════════════════════════════════════════
    PAGE COMPONENT
 ════════════════════════════════════════ */
@@ -96,45 +131,59 @@ export default function Home() {
   const [rawTrends, setRawTrends]       = useState<RawTrends | null>(null);
   const [aiSummary, setAiSummary]       = useState<any>(null);
   const [status, setStatus]             = useState<'Online' | 'OFFLINE'>('OFFLINE');
+  const [lastUpdated, setLastUpdated]   = useState<string | null>(null);
   const [syncing, setSyncing]           = useState(false);
   const [generatingAI, setGeneratingAI] = useState(false);
   const [drawerOpen, setDrawerOpen]     = useState(false);
 
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+  /* ── Load data: Supabase first, backend fallback ── */
   const fetchData = useCallback(async () => {
+    // 1. Read raw trends from Supabase (always available, no backend needed)
+    const sbRaw = await fetchRawFromSupabase();
+    if (sbRaw) {
+      setRawTrends(sbRaw);
+      setLastUpdated(sbRaw.timestamp || null);
+    }
+
+    // 2. Read AI digest from Supabase
+    const sbAI = await fetchAIFromSupabase();
+    if (sbAI) setAiSummary(sbAI);
+
+    // 3. Check backend status (non-blocking — UI data already loaded above)
     try {
-      const [rawRes, aiRes, statusRes] = await Promise.all([
-        fetch(`${API_BASE}/api/trends/raw`),
-        fetch(`${API_BASE}/api/trends/ai`),
-        fetch(`${API_BASE}/api/status`),
-      ]);
-      setRawTrends(await rawRes.json());
-      setAiSummary(await aiRes.json());
-      const s = await statusRes.json();
+      const res = await fetch(`${API_BASE}/api/status`, { signal: AbortSignal.timeout(5000) });
+      const s = await res.json();
       setStatus(s.status);
-    } catch (err) {
-      console.error('Fetch error:', err);
-      setStatus('OFFLINE');
+    } catch {
+      setStatus('OFFLINE'); // Backend is sleeping, but data is still shown
     }
   }, [API_BASE]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  /* ── Sync: wakes backend, collects fresh data, saves to Supabase ── */
   const triggerSync = async () => {
     setSyncing(true);
     try {
       await fetch(`${API_BASE}/api/sync`, { method: 'POST' });
-      setTimeout(fetchData, 5000);
+      // Wait for background collection, then re-read from Supabase
+      setTimeout(async () => {
+        const sbRaw = await fetchRawFromSupabase();
+        if (sbRaw) { setRawTrends(sbRaw); setLastUpdated(sbRaw.timestamp || null); }
+      }, 8000);
     } catch (err) { console.error(err); }
     finally { setSyncing(false); }
   };
 
+  /* ── AI: calls backend, result is stored in Supabase and returned ── */
   const generateAI = async () => {
     setGeneratingAI(true);
     try {
       const res = await fetch(`${API_BASE}/api/trends/ai/generate`, { method: 'POST' });
-      setAiSummary(await res.json());
+      const data = await res.json();
+      setAiSummary(data);
       setActiveFilter('AI Digest');
     } catch (err) { console.error(err); }
     finally { setGeneratingAI(false); }
@@ -160,13 +209,19 @@ export default function Home() {
     setDrawerOpen(false);
   };
 
+  const formatLastUpdated = (ts: string | null) => {
+    if (!ts) return 'No data yet';
+    const d = new Date(ts);
+    return `Updated ${d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} at ${d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`;
+  };
+
   const SidebarContent = () => (
     <div className={styles.sidebarInner}>
       <div className={styles.brand}>
         <h1 className={styles.brandTitle}>Trend Radar</h1>
         <span className={`${styles.statusPill} ${status === 'Online' ? styles.statusOnline : styles.statusOffline}`}>
           <span className={styles.statusDot} />
-          {status}
+          {status === 'Online' ? 'Online' : 'Backend Sleeping'}
         </span>
       </div>
 
@@ -204,7 +259,7 @@ export default function Home() {
     <>
       <div className={`overlay ${drawerOpen ? 'visible' : ''}`} onClick={() => setDrawerOpen(false)} />
       <div className={styles.app}>
-        {/* Desktop & Mobile Drawer */}
+        {/* Desktop & Mobile Drawer Sidebar */}
         <aside className={`${styles.sidebar} ${drawerOpen ? styles.open : ''} glass`}>
           <SidebarContent />
         </aside>
@@ -216,7 +271,7 @@ export default function Home() {
               <span /><span /><span />
             </button>
             <span className={styles.mobileTopBarTitle}>Trend Radar</span>
-            <div style={{ width: 40 }} /> {/* Spacer */}
+            <div style={{ width: 40 }} />
           </header>
 
           <main className={styles.content}>
@@ -225,7 +280,9 @@ export default function Home() {
                 {activeFilter === 'AI Digest' ? 'Intelligence Digest' : `${activeFilter} Feed`}
               </h2>
               <p className={styles.contentSubtitle}>
-                Found {displayTrends.length} actionable signals
+                {displayTrends.length > 0
+                  ? `${displayTrends.length} signals · ${formatLastUpdated(lastUpdated)}`
+                  : formatLastUpdated(lastUpdated)}
               </p>
             </div>
 
@@ -233,8 +290,8 @@ export default function Home() {
               {displayTrends.length === 0 ? (
                 <div className={styles.emptyState}>
                   <div className={styles.emptyIcon}>💎</div>
-                  <h3>Waiting for data...</h3>
-                  <p>Click Sync to begin data collection.</p>
+                  <h3>No data yet</h3>
+                  <p>Click Sync Data to begin collection. Data persists across sessions once saved.</p>
                 </div>
               ) : (
                 displayTrends.map((trend: any, idx: number) => (
@@ -245,18 +302,16 @@ export default function Home() {
           </main>
         </div>
 
-        {/* Mobile Action Bar */}
+        {/* Mobile Bottom Action Bar */}
         <div className={styles.mobileBottomBar}>
           <button className="btn-primary" onClick={generateAI} disabled={generatingAI}>
-            {generatingAI ? '...' : '🪄 AI Digest'}
+            {generatingAI ? '⏳' : '🪄'} AI Digest
           </button>
           <button className="btn-secondary" onClick={triggerSync} disabled={syncing}>
-            {syncing ? '...' : '🔄 Sync'}
+            {syncing ? '⏳' : '🔄'} Sync
           </button>
           {aiSummary?.trends && (
-            <button className="btn-secondary" onClick={shareConsolidated}>
-              📢 Share
-            </button>
+            <button className="btn-secondary" onClick={shareConsolidated}>📢</button>
           )}
         </div>
       </div>
