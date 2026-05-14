@@ -194,3 +194,72 @@ img { max-width: 100%; display: block; }
   opacity: 1;
   pointer-events: all;
 }
+
+/* ── Animations ── */
+@keyframes urgentPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  60%       { box-shadow: 0 0 0 7px rgba(239, 68, 68, 0); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes toastSlideIn {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes drawerSlideIn {
+  from { opacity: 0; transform: translateX(100%); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes sheetSlideIn {
+  from { opacity: 0; transform: translateY(100%); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Trend Drawer ── */
+.trend-drawer {
+  position: fixed;
+  top: 0; right: 0;
+  height: 100%;
+  width: 460px;
+  max-width: 95vw;
+  background: #0d1117;
+  border-left: 1px solid rgba(255,255,255,0.07);
+  z-index: 500;
+  overflow-y: auto;
+  box-shadow: -24px 0 60px rgba(0,0,0,0.6);
+  animation: drawerSlideIn 0.28s cubic-bezier(0.4,0,0.2,1);
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 768px) {
+  .trend-drawer {
+    top: auto; right: 0; left: 0; bottom: 0;
+    width: 100%; max-width: 100%; height: 85vh;
+    border-left: none;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 -24px 60px rgba(0,0,0,0.6);
+    animation: sheetSlideIn 0.28s cubic-bezier(0.4,0,0.2,1);
+  }
+}
+
+/* ── Skeleton loader ── */
+.skeleton-card {
+  border-radius: 20px;
+  height: 260px;
+  background: linear-gradient(
+    90deg,
+    rgba(255,255,255,0.03) 0%,
+    rgba(255,255,255,0.06) 50%,
+    rgba(255,255,255,0.03) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s infinite;
+}
