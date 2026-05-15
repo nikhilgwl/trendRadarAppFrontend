@@ -436,7 +436,7 @@ export default function Home() {
     });
   }, [aiSummary, API_BASE]);
 
-  /* ── Historical search (fuzzy + AI relevance in parallel) ── */
+  /* ── Historical search (fuzzy only — Gemini synthesis is lazy-loaded on tab click) ── */
   const handleSearch = useCallback((q: string) => {
     setSearchQuery(q);
     if (searchDebounce.current) clearTimeout(searchDebounce.current);
@@ -448,19 +448,12 @@ export default function Home() {
     }
     searchDebounce.current = setTimeout(async () => {
       setSearching(true);
-      setLoadingRelevant(true);
+      // Reset any previous synthesis so it re-fetches for the new query
       setSearchRelevant(null);
       setSearchTab('all');
 
-      // Fire both requests in parallel
-      const [fuzzyRes, relevantRes] = await Promise.allSettled([
-        fetch(`${API_BASE}/api/search?q=${encodeURIComponent(q)}`).then(r => r.json()),
-        fetch(`${API_BASE}/api/search/relevant?q=${encodeURIComponent(q)}`, { signal: AbortSignal.timeout(60_000) }).then(r => r.json()),
-      ]);
-
-      // Handle fuzzy results
-      if (fuzzyRes.status === 'fulfilled') {
-        const data = fuzzyRes.value;
+      try {
+        const data = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(q)}`).then(r => r.json());
         const cards = (data.results || []).map((r: any) => {
           const item = r.item; const platform = r.platform;
           return {
@@ -474,20 +467,28 @@ export default function Home() {
           };
         });
         setSearchResults(cards);
-      } else {
+      } catch {
         setSearchResults([]);
       }
       setSearching(false);
-
-      // Handle AI relevance results
-      if (relevantRes.status === 'fulfilled') {
-        setSearchRelevant(relevantRes.value?.trends || []);
-      } else {
-        setSearchRelevant([]);
-      }
-      setLoadingRelevant(false);
     }, 500);
   }, [API_BASE]);
+
+  /* ── Gemini synthesis — only called when user clicks "Most Relevant" tab ── */
+  const fetchRelevant = useCallback(async (q: string) => {
+    if (!q.trim() || loadingRelevant) return;
+    setLoadingRelevant(true);
+    try {
+      const data = await fetch(
+        `${API_BASE}/api/search/relevant?q=${encodeURIComponent(q)}`,
+        { signal: AbortSignal.timeout(60_000) }
+      ).then(r => r.json());
+      setSearchRelevant(data?.trends || []);
+    } catch {
+      setSearchRelevant([]);
+    }
+    setLoadingRelevant(false);
+  }, [API_BASE, loadingRelevant]);
 
   /* ── Sync ── */
   const triggerSync = async () => {
@@ -764,7 +765,11 @@ export default function Home() {
                     </span>
                   </button>
                   <button
-                    onClick={() => setSearchTab('relevant')}
+                    onClick={() => {
+                      setSearchTab('relevant');
+                      // Only call Gemini if we don't already have results for this query
+                      if (searchRelevant === null) fetchRelevant(searchQuery);
+                    }}
                     style={{
                       padding: '6px 16px', borderRadius: 8, fontSize: '0.8rem', fontWeight: 600,
                       cursor: 'pointer', border: '1px solid',
@@ -776,7 +781,9 @@ export default function Home() {
                     ✨ Most Relevant
                     {loadingRelevant
                       ? <span style={{ marginLeft: 6, fontSize: '0.65rem', opacity: 0.6 }}>AI thinking…</span>
-                      : <span style={{ marginLeft: 6, fontSize: '0.7rem', opacity: 0.7 }}>{searchRelevant?.length ?? 0}</span>
+                      : searchRelevant === null
+                        ? <span style={{ marginLeft: 6, fontSize: '0.65rem', opacity: 0.5 }}>click to load</span>
+                        : <span style={{ marginLeft: 6, fontSize: '0.7rem', opacity: 0.7 }}>{searchRelevant.length}</span>
                     }
                   </button>
                 </div>
