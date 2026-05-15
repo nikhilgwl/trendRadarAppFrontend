@@ -140,11 +140,19 @@ function mapRawToCards(rawTrends: RawTrends, filter: FilterKey): any[] {
     })];
   }
   if (filter === 'All' || filter === 'Instagram') {
-    list = [...list, ...(rawTrends.instagram || []).map((p: any) => ({
-      trend_name: p.hashtag || 'Instagram Trend', label: '[INSTAGRAM]', category: 'Visual',
-      source_platform: 'Instagram', metric: `${p.likes || 0} likes`,
-      context: p.caption || p.hashtag, result: 'Instagram engagement signal', url: p.url,
-    }))];
+    list = [...list, ...(rawTrends.instagram || []).map((p: any) => {
+      // Use first meaningful hashtag from caption, or caption excerpt — not the search hashtag
+      // (all posts share the same search hashtag, making individual titles indistinct)
+      const captionHashtags = (p.caption || '').match(/#\w+/g) || [];
+      const firstMeaningful = captionHashtags.find((h: string) => h.toLowerCase() !== (p.hashtag || '').toLowerCase()) || captionHashtags[0];
+      const captionExcerpt  = (p.caption || '').replace(/#\w+/g, '').replace(/https?:\/\/\S+/g, '').trim().slice(0, 65);
+      const title = firstMeaningful || captionExcerpt || p.hashtag || 'Instagram Post';
+      return {
+        trend_name: title, label: '[INSTAGRAM]', category: 'Visual',
+        source_platform: 'Instagram', metric: `${p.likes || 0} likes`,
+        context: p.caption || p.hashtag, result: 'Instagram engagement signal', url: p.url,
+      };
+    })];
   }
   if (filter === 'All' || filter === 'Nykaa') {
     list = [...list, ...(rawTrends.nykaa || []).map((p: any) => ({
@@ -348,6 +356,9 @@ export default function Home() {
   const [searchQuery, setSearchQuery]             = useState('');
   const [searchResults, setSearchResults]         = useState<any[] | null>(null);
   const [searching, setSearching]                 = useState(false);
+  const [searchTab, setSearchTab]                 = useState<'all' | 'relevant'>('all');
+  const [searchRelevant, setSearchRelevant]       = useState<any[] | null>(null);
+  const [loadingRelevant, setLoadingRelevant]     = useState(false);
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const syncOnCooldown = Date.now() < syncCooldownUntil;
@@ -425,16 +436,31 @@ export default function Home() {
     });
   }, [aiSummary, API_BASE]);
 
-  /* ── Historical search ── */
+  /* ── Historical search (fuzzy + AI relevance in parallel) ── */
   const handleSearch = useCallback((q: string) => {
     setSearchQuery(q);
     if (searchDebounce.current) clearTimeout(searchDebounce.current);
-    if (!q.trim()) { setSearchResults(null); return; }
+    if (!q.trim()) {
+      setSearchResults(null);
+      setSearchRelevant(null);
+      setSearchTab('all');
+      return;
+    }
     searchDebounce.current = setTimeout(async () => {
       setSearching(true);
-      try {
-        const res  = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(q)}`);
-        const data = await res.json();
+      setLoadingRelevant(true);
+      setSearchRelevant(null);
+      setSearchTab('all');
+
+      // Fire both requests in parallel
+      const [fuzzyRes, relevantRes] = await Promise.allSettled([
+        fetch(`${API_BASE}/api/search?q=${encodeURIComponent(q)}`).then(r => r.json()),
+        fetch(`${API_BASE}/api/search/relevant?q=${encodeURIComponent(q)}`, { signal: AbortSignal.timeout(60_000) }).then(r => r.json()),
+      ]);
+
+      // Handle fuzzy results
+      if (fuzzyRes.status === 'fulfilled') {
+        const data = fuzzyRes.value;
         const cards = (data.results || []).map((r: any) => {
           const item = r.item; const platform = r.platform;
           return {
@@ -448,8 +474,18 @@ export default function Home() {
           };
         });
         setSearchResults(cards);
-      } catch { setSearchResults([]); }
-      finally { setSearching(false); }
+      } else {
+        setSearchResults([]);
+      }
+      setSearching(false);
+
+      // Handle AI relevance results
+      if (relevantRes.status === 'fulfilled') {
+        setSearchRelevant(relevantRes.value?.trends || []);
+      } else {
+        setSearchRelevant([]);
+      }
+      setLoadingRelevant(false);
     }, 500);
   }, [API_BASE]);
 
@@ -545,7 +581,10 @@ export default function Home() {
   const changeFilter = (f: FilterKey) => {
     setActiveFilter(f);
     setDrawerOpen(false);
-    if (searchResults !== null) { setSearchResults(null); setSearchQuery(''); }
+    if (searchResults !== null) {
+      setSearchResults(null); setSearchQuery('');
+      setSearchRelevant(null); setSearchTab('all');
+    }
     if (f === 'Brand Health') {
       setTimeout(() => addToast('📊 Share-of-Voice chart needs 2–3 weeks of data to populate', 'info'), 800);
     }
@@ -704,14 +743,111 @@ export default function Home() {
               </>
             )}
 
-            {/* Flat card grid — raw feeds, competitor intel, search results */}
-            {showFlatGrid && (
+            {/* Search results — tabbed view */}
+            {showFlatGrid && searchResults !== null && (
+              <div>
+                {/* Tab bar */}
+                <div style={{ display: 'flex', gap: 8, marginBottom: '1.25rem', borderBottom: '1px solid rgba(255,255,255,0.07)', paddingBottom: '0.75rem' }}>
+                  <button
+                    onClick={() => setSearchTab('all')}
+                    style={{
+                      padding: '6px 16px', borderRadius: 8, fontSize: '0.8rem', fontWeight: 600,
+                      cursor: 'pointer', border: '1px solid',
+                      background: searchTab === 'all' ? 'rgba(124,58,237,0.15)' : 'transparent',
+                      borderColor: searchTab === 'all' ? 'rgba(124,58,237,0.45)' : 'rgba(255,255,255,0.1)',
+                      color: searchTab === 'all' ? '#a855f7' : '#94a3b8',
+                      transition: 'all 0.15s',
+                    }}>
+                    🌐 All Results
+                    <span style={{ marginLeft: 6, fontSize: '0.7rem', opacity: 0.7 }}>
+                      {searching ? '…' : `${searchResults.length}`}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setSearchTab('relevant')}
+                    style={{
+                      padding: '6px 16px', borderRadius: 8, fontSize: '0.8rem', fontWeight: 600,
+                      cursor: 'pointer', border: '1px solid',
+                      background: searchTab === 'relevant' ? 'rgba(16,185,129,0.12)' : 'transparent',
+                      borderColor: searchTab === 'relevant' ? 'rgba(16,185,129,0.4)' : 'rgba(255,255,255,0.1)',
+                      color: searchTab === 'relevant' ? '#10b981' : '#94a3b8',
+                      transition: 'all 0.15s',
+                    }}>
+                    ✨ Most Relevant
+                    {loadingRelevant
+                      ? <span style={{ marginLeft: 6, fontSize: '0.65rem', opacity: 0.6 }}>AI thinking…</span>
+                      : <span style={{ marginLeft: 6, fontSize: '0.7rem', opacity: 0.7 }}>{searchRelevant?.length ?? 0}</span>
+                    }
+                  </button>
+                </div>
+
+                {/* All Results tab */}
+                {searchTab === 'all' && (
+                  <div className={styles.grid}>
+                    {searching ? (
+                      [...Array(4)].map((_, i) => <div key={i} className="skeleton-card" />)
+                    ) : searchResults.length === 0 ? (
+                      <div className={styles.emptyState}>
+                        <div className={styles.emptyIcon}>🔍</div>
+                        <h3>No results found</h3>
+                        <p>Try a different or shorter search term.</p>
+                      </div>
+                    ) : (
+                      searchResults.map((trend: any, idx: number) => (
+                        <TrendCard key={idx} trend={trend} onOpen={() => setSelectedTrend(trend as Trend)} />
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* Most Relevant tab — AI digest format */}
+                {searchTab === 'relevant' && (
+                  <div>
+                    {loadingRelevant ? (
+                      <div style={{ textAlign: 'center', padding: '3rem 0', color: '#475569' }}>
+                        <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>✨</div>
+                        <div style={{ fontSize: '0.88rem', fontWeight: 600, color: '#94a3b8', marginBottom: '0.35rem' }}>
+                          AI is synthesising the most relevant insights…
+                        </div>
+                        <div style={{ fontSize: '0.74rem', color: '#334155' }}>This takes 5–15 seconds</div>
+                      </div>
+                    ) : !searchRelevant || searchRelevant.length === 0 ? (
+                      <div className={styles.emptyState}>
+                        <div className={styles.emptyIcon}>🤖</div>
+                        <h3>No AI insights generated</h3>
+                        <p>The search returned results but Gemini found no actionable patterns. Try broadening your query.</p>
+                      </div>
+                    ) : (
+                      groupDigest(searchRelevant).map(group => (
+                        <div key={group.category} className={styles.digestSection}>
+                          <div className={styles.categoryHeader}>
+                            <span className={styles.categoryHeaderIcon}>{group.icon}</span>
+                            <span className={styles.categoryHeaderTitle}>{group.category}</span>
+                            <span className={styles.categoryHeaderCount}>
+                              {group.trends.length} insight{group.trends.length !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                          <div className={styles.grid}>
+                            {group.trends.map((trend: any, idx: number) => (
+                              <TrendCard key={idx} trend={trend} onOpen={() => setSelectedTrend(trend as Trend)} />
+                            ))}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Flat card grid — raw feeds, competitor intel (non-search) */}
+            {showFlatGrid && searchResults === null && (
               <div className={styles.grid}>
                 {displayTrends.length === 0 ? (
                   <div className={styles.emptyState}>
                     <div className={styles.emptyIcon}>💎</div>
-                    <h3>{searchResults !== null ? 'No results found' : 'No data yet'}</h3>
-                    <p>{searchResults !== null ? 'Try a different search term.' : 'Click Sync Data to begin collection.'}</p>
+                    <h3>No data yet</h3>
+                    <p>Click Sync Data to begin collection.</p>
                   </div>
                 ) : (
                   displayTrends.map((trend: any, idx: number) => (

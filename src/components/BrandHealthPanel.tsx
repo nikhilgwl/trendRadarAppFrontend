@@ -236,6 +236,154 @@ function MarketplaceSection({ apiBase }: { apiBase: string }) {
   );
 }
 
+// ── Share-of-Voice Chart ──────────────────────────────────────────────────────
+
+const SOV_COLORS = ['#ef4444', '#f97316', '#eab308', '#3b82f6', '#a855f7', '#06b6d4', '#f43f5e'];
+const HUL_COLOR  = '#10b981';
+
+interface SovSegment { name: string; count: number; color: string; pct: number; path: string; }
+
+function _polar(cx: number, cy: number, r: number, deg: number) {
+  const rad = ((deg - 90) * Math.PI) / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+function _donutArc(cx: number, cy: number, oR: number, iR: number, s: number, e: number): string {
+  const os = _polar(cx, cy, oR, s), oe = _polar(cx, cy, oR, e);
+  const ie = _polar(cx, cy, iR, e), is_ = _polar(cx, cy, iR, s);
+  const lg = e - s > 180 ? 1 : 0;
+  const f = (n: number) => n.toFixed(2);
+  return [
+    `M ${f(os.x)} ${f(os.y)}`,
+    `A ${oR} ${oR} 0 ${lg} 1 ${f(oe.x)} ${f(oe.y)}`,
+    `L ${f(ie.x)} ${f(ie.y)}`,
+    `A ${iR} ${iR} 0 ${lg} 0 ${f(is_.x)} ${f(is_.y)}`,
+    'Z',
+  ].join(' ');
+}
+
+function ShareOfVoiceChart({
+  competitors, ownBrands, days,
+}: {
+  competitors: Record<string, BrandEntry>;
+  ownBrands: Record<string, BrandEntry>;
+  days: number;
+}) {
+  const totalOwn  = Object.values(ownBrands).reduce((s, e) => s + (e?.count ?? 0), 0);
+  const totalComp = Object.values(competitors).reduce((s, e) => s + (e?.count ?? 0), 0);
+  const grand     = totalOwn + totalComp;
+
+  if (grand === 0) {
+    return (
+      <div style={{ textAlign: 'center', padding: '2rem 0', color: '#475569', fontSize: '0.82rem' }}>
+        No mention data yet for this period — run a Sync to collect signals.
+      </div>
+    );
+  }
+
+  // Build raw segments
+  const compEntries = Object.entries(competitors).sort((a, b) => b[1].count - a[1].count);
+  const top5        = compEntries.slice(0, 5);
+  const othersCount = compEntries.slice(5).reduce((s, [, e]) => s + (e.count ?? 0), 0);
+
+  type RawSeg = { name: string; count: number; color: string };
+  const rawSegs: RawSeg[] = [];
+  if (totalOwn > 0)   rawSegs.push({ name: 'HUL', count: totalOwn, color: HUL_COLOR });
+  top5.forEach(([name, e], i) => rawSegs.push({ name, count: e.count, color: SOV_COLORS[i % SOV_COLORS.length] }));
+  if (othersCount > 0) rawSegs.push({ name: 'Others', count: othersCount, color: '#475569' });
+
+  // Build arc paths (1.5° gap between segments)
+  const GAP = 1.5;
+  const cx = 90, cy = 90, oR = 72, iR = 46;
+  let cursor = 0;
+  const segs: SovSegment[] = rawSegs
+    .filter(s => s.count > 0)
+    .map(s => {
+      const pct       = s.count / grand;
+      const totalDeg  = pct * 360;
+      const span      = Math.max(totalDeg - GAP, 0.2);
+      const start     = cursor;
+      cursor         += totalDeg;
+      return { ...s, pct, path: _donutArc(cx, cy, oR, iR, start, start + span) };
+    });
+
+  return (
+    <div>
+      {/* Caveat banner */}
+      <div style={{
+        background: 'rgba(245,158,11,0.06)',
+        border: '1px solid rgba(245,158,11,0.18)',
+        borderRadius: 8, padding: '8px 14px', marginBottom: '1.25rem',
+        display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.73rem',
+      }}>
+        <span>⚠️</span>
+        <span style={{ color: '#94a3b8', lineHeight: 1.5 }}>
+          Based on <strong style={{ color: '#f59e0b' }}>{days} day{days !== 1 ? 's' : ''}</strong> of
+          data · <strong style={{ color: '#f1f5f9' }}>{grand}</strong> organic mentions
+          (Reddit, Google, Instagram, Twitter, News) ·
+          For best accuracy, 2–3 weeks of collection is recommended
+        </span>
+      </div>
+
+      {/* Chart + Legend */}
+      <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        {/* SVG Donut */}
+        <div style={{ flexShrink: 0 }}>
+          <svg width={180} height={180} viewBox="0 0 180 180">
+            {segs.map((seg, i) => (
+              <path key={i} d={seg.path} fill={seg.color} opacity={0.9}>
+                <title>{seg.name}: {seg.count} mentions ({(seg.pct * 100).toFixed(1)}%)</title>
+              </path>
+            ))}
+            {/* Centre label */}
+            <text x={cx} y={cy - 5} textAnchor="middle" fill="#f1f5f9"
+                  fontSize="18" fontWeight="800" fontFamily="Outfit,sans-serif">{grand}</text>
+            <text x={cx} y={cy + 11} textAnchor="middle" fill="#475569"
+                  fontSize="8.5" fontWeight="700" letterSpacing="0.09em">MENTIONS</text>
+          </svg>
+        </div>
+
+        {/* Legend */}
+        <div style={{ flex: 1, minWidth: 150 }}>
+          {segs.map((seg, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 10, height: 10, borderRadius: 3, flexShrink: 0, background: seg.color }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{
+                    fontSize: '0.78rem', fontWeight: seg.name === 'HUL' ? 700 : 600,
+                    color: seg.name === 'HUL' ? '#10b981' : '#e2e8f0',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>{seg.name}</span>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: seg.color, flexShrink: 0 }}>
+                    {(seg.pct * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div style={{ height: 2, background: 'rgba(255,255,255,0.06)', borderRadius: 2, marginTop: 4 }}>
+                  <div style={{ width: `${seg.pct * 100}%`, height: '100%', background: seg.color, borderRadius: 2 }} />
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {/* HUL vs Competitors summary line */}
+          <div style={{
+            marginTop: 6, paddingTop: 10,
+            borderTop: '1px solid rgba(255,255,255,0.06)',
+            fontSize: '0.7rem', color: '#94a3b8',
+          }}>
+            <span style={{ color: '#10b981', fontWeight: 700 }}>HUL {((totalOwn / grand) * 100).toFixed(0)}%</span>
+            {' vs '}
+            <span style={{ color: '#ef4444', fontWeight: 700 }}>Competitors {((totalComp / grand) * 100).toFixed(0)}%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const PLATFORM_ICONS: Record<string, string> = {
   Reddit: '👾', Amazon: '🛒', Instagram: '📸', Twitter: '🐦',
   News: '📰', Nykaa: '💄', Social: '🌐',
@@ -430,26 +578,25 @@ export default function BrandHealthPanel({ apiBase }: { apiBase: string }) {
       {/* Marketplace Intelligence */}
       <MarketplaceSection apiBase={apiBase} />
 
-      {/* Share-of-Voice placeholder */}
-      <div style={{
-        marginTop: '2rem',
-        background: 'rgba(255,255,255,0.015)',
-        border: '1px dashed rgba(255,255,255,0.08)',
-        borderRadius: 14, padding: '2rem',
-        textAlign: 'center',
-      }}>
-        <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📊</div>
-        <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#f1f5f9', marginBottom: '0.4rem' }}>Share-of-Voice Chart</div>
-        <div style={{ fontSize: '0.76rem', color: '#475569', maxWidth: 340, margin: '0 auto', lineHeight: 1.6 }}>
-          Needs 2–3 weeks of mention data to be statistically meaningful.
-        </div>
+      {/* Share-of-Voice Chart */}
+      {digest && (
         <div style={{
-          display: 'inline-block', marginTop: '0.75rem',
-          padding: '3px 12px', borderRadius: 20,
-          background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)',
-          fontSize: '0.65rem', fontWeight: 700, color: '#f59e0b',
-        }}>⏳ COMING SOON</div>
-      </div>
+          marginTop: '2rem',
+          background: 'rgba(255,255,255,0.015)',
+          border: '1px solid rgba(255,255,255,0.07)',
+          borderRadius: 14, padding: '1.5rem',
+        }}>
+          <div style={{
+            fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase',
+            letterSpacing: '0.1em', color: '#475569', marginBottom: '1.25rem',
+          }}>📊 Share-of-Voice</div>
+          <ShareOfVoiceChart
+            competitors={competitors}
+            ownBrands={ownBrands}
+            days={days}
+          />
+        </div>
+      )}
     </div>
   );
 }
